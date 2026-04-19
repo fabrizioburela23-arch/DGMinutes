@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
@@ -10,11 +11,17 @@ import Register from './pages/Register';
 import InterpreterDashboard from './pages/InterpreterDashboard';
 import MasterDashboard from './pages/MasterDashboard';
 
-function ProtectedRoute({ children, allowedRole }: { children: React.ReactNode, allowedRole?: 'interpreter' | 'master' }) {
+function ProtectedRoute({ children, allowedRole }: { children: ReactNode; allowedRole?: 'interpreter' | 'master' }) {
   const { user, loading } = useAuth();
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
-  if (!user) return <Navigate to="/login" />;
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" />;
+  }
+
   if (allowedRole && user.role !== allowedRole) {
     return <Navigate to={user.role === 'master' ? '/master' : '/dashboard'} />;
   }
@@ -25,7 +32,9 @@ function ProtectedRoute({ children, allowedRole }: { children: React.ReactNode, 
 function AppRoutes() {
   const { user, loading } = useAuth();
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
+  }
 
   return (
     <Routes>
