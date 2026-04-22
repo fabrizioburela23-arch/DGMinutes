@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Upload, LogOut, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, LogOut, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react';
 
 type RecordItem = {
   id: string;
@@ -13,6 +13,38 @@ type RecordItem = {
 
 function getErrorMessage(payload: any, fallback: string) {
   return payload?.error || fallback;
+}
+
+function parseDateRange(dateRange: string): { start: Date | null; end: Date | null; days: number } {
+  const cleaned = dateRange.replace(/\s+/g, ' ').trim();
+  // Match patterns like "2026-03-01 to 2026-03-29", "2026-03-01 - 2026-03-29", "03/01/2026 to 03/29/2026"
+  const match = cleaned.match(/([\d]{4}[\-\/][\d]{1,2}[\-\/][\d]{1,2})\s*(?:to|\-|–|—)\s*([\d]{4}[\-\/][\d]{1,2}[\-\/][\d]{1,2})/);
+  if (!match) return { start: null, end: null, days: 0 };
+
+  const start = new Date(match[1].replace(/\//g, '-'));
+  const end = new Date(match[2].replace(/\//g, '-'));
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return { start: null, end: null, days: 0 };
+
+  const diffMs = Math.abs(end.getTime() - start.getTime());
+  const days = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1; // inclusive
+  return { start, end, days };
+}
+
+function detectDateRangeType(days: number): 'daily' | 'weekly' | 'monthly' | null {
+  if (days <= 0) return null;
+  if (days === 1) return 'daily';
+  if (days >= 2 && days <= 10) return 'weekly';
+  if (days >= 11) return 'monthly';
+  return null;
+}
+
+function getRecordTypeLabel(type: string): string {
+  switch (type) {
+    case 'daily': return 'Daily';
+    case 'weekly': return 'Weekly';
+    case 'monthly': return 'Monthly';
+    default: return type;
+  }
 }
 
 export default function InterpreterDashboard() {
@@ -29,6 +61,22 @@ export default function InterpreterDashboard() {
     totalCalls: '',
     recordType: 'daily' as 'daily' | 'weekly' | 'monthly',
   });
+
+  const dateRangeMismatch = useMemo(() => {
+    if (!formData.dateRange) return null;
+    const { days } = parseDateRange(formData.dateRange);
+    if (days <= 0) return null;
+    const detectedType = detectDateRangeType(days);
+    if (!detectedType) return null;
+    if (detectedType === formData.recordType) return null;
+
+    return {
+      days,
+      detectedType,
+      selectedType: formData.recordType,
+      message: `⚠️ The date range spans ${days} day${days !== 1 ? 's' : ''}, which looks like a ${getRecordTypeLabel(detectedType)} record, but you selected "${getRecordTypeLabel(formData.recordType)}". Please verify this is correct.`,
+    };
+  }, [formData.dateRange, formData.recordType]);
 
   useEffect(() => {
     setFormData((prev) => ({ ...prev, interpreterId: user?.interpreterId || '' }));
@@ -218,6 +266,15 @@ export default function InterpreterDashboard() {
                 <div className={`mb-4 p-3 rounded-lg flex items-start ${message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
                   {message.type === 'success' ? <CheckCircle className="h-5 w-5 mr-2 flex-shrink-0" /> : <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0" />}
                   <span className="text-sm">{message.text}</span>
+                </div>
+              )}
+              {dateRangeMismatch && (
+                <div className="mb-4 p-3 rounded-lg flex items-start bg-amber-50 border border-amber-200 text-amber-800">
+                  <AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0 text-amber-500" />
+                  <div className="text-sm">
+                    <p className="font-semibold">Record Type Mismatch</p>
+                    <p>{dateRangeMismatch.message}</p>
+                  </div>
                 </div>
               )}
               <form onSubmit={handleSubmit} className="space-y-4">
