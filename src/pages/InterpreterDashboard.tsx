@@ -18,7 +18,7 @@ function getErrorMessage(payload: any, fallback: string) {
 function parseDateRange(dateRange: string): { start: Date | null; end: Date | null; days: number } {
   const cleaned = dateRange.replace(/\s+/g, ' ').trim();
   // Match patterns like "2026-03-01 to 2026-03-29", "2026-03-01 - 2026-03-29", "03/01/2026 to 03/29/2026"
-  const match = cleaned.match(/([\d]{4}[\-\/][\d]{1,2}[\-\/][\d]{1,2})\s*(?:to|\-|–|—)\s*([\d]{4}[\-\/][\d]{1,2}[\-\/][\d]{1,2})/);
+  const match = cleaned.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*(?:to|-|–|—)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})/);
   if (!match) return { start: null, end: null, days: 0 };
 
   const start = new Date(match[1].replace(/\//g, '-'));
