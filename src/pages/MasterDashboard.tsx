@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, Users, FileText, BarChart3 } from 'lucide-react';
+import { LogOut, Users, FileText, BarChart3, AlertTriangle } from 'lucide-react';
+import { checkDateRangeMismatch, getRecordTypeLabel } from '../lib/dateRangeMismatch';
 
 export default function MasterDashboard() {
   const { user, logout, token } = useAuth();
@@ -352,13 +353,22 @@ export default function MasterDashboard() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredRecords.map((record) => (
-                    <tr key={record.id} className="hover:bg-gray-50">
+                  {filteredRecords.map((record) => {
+                    const mismatch = checkDateRangeMismatch(record.dateRange, (record.recordType || 'daily') as 'daily' | 'weekly' | 'monthly');
+                    return (
+                    <tr key={record.id} className={`hover:bg-gray-50 ${mismatch ? 'bg-amber-50' : ''}`}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {new Date(record.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
-                        {record.recordType || 'daily'}
+                        <div className="flex items-center gap-1">
+                          {record.recordType || 'daily'}
+                          {mismatch && (
+                            <span title={mismatch.message} className="text-amber-500 cursor-help">
+                              <AlertTriangle className="h-4 w-4" />
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {record.username}
@@ -366,8 +376,13 @@ export default function MasterDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {record.interpreterId}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {record.dateRange}
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        <div>{record.dateRange}</div>
+                        {mismatch && (
+                          <div className="text-xs text-amber-600 mt-1">
+                            ⚠️ Looks like {getRecordTypeLabel(mismatch.detectedType)} ({mismatch.days} days)
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {record.totalMinutes}
@@ -375,8 +390,8 @@ export default function MasterDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {record.totalCalls}
                       </td>
-                    </tr>
-                  ))}
+                    </tr>);
+                  })}
                 </tbody>
               </table>
             </div>

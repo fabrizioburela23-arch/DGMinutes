@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Upload, LogOut, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react';
+import { checkDateRangeMismatch, getRecordTypeLabel } from '../lib/dateRangeMismatch';
 
 type RecordItem = {
   id: string;
@@ -13,38 +14,6 @@ type RecordItem = {
 
 function getErrorMessage(payload: any, fallback: string) {
   return payload?.error || fallback;
-}
-
-function parseDateRange(dateRange: string): { start: Date | null; end: Date | null; days: number } {
-  const cleaned = dateRange.replace(/\s+/g, ' ').trim();
-  // Match patterns like "2026-03-01 to 2026-03-29", "2026-03-01 - 2026-03-29", "03/01/2026 to 03/29/2026"
-  const match = cleaned.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*(?:to|-|–|—)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})/);
-  if (!match) return { start: null, end: null, days: 0 };
-
-  const start = new Date(match[1].replace(/\//g, '-'));
-  const end = new Date(match[2].replace(/\//g, '-'));
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return { start: null, end: null, days: 0 };
-
-  const diffMs = Math.abs(end.getTime() - start.getTime());
-  const days = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1; // inclusive
-  return { start, end, days };
-}
-
-function detectDateRangeType(days: number): 'daily' | 'weekly' | 'monthly' | null {
-  if (days <= 0) return null;
-  if (days === 1) return 'daily';
-  if (days >= 2 && days <= 10) return 'weekly';
-  if (days >= 11) return 'monthly';
-  return null;
-}
-
-function getRecordTypeLabel(type: string): string {
-  switch (type) {
-    case 'daily': return 'Daily';
-    case 'weekly': return 'Weekly';
-    case 'monthly': return 'Monthly';
-    default: return type;
-  }
 }
 
 export default function InterpreterDashboard() {
@@ -63,19 +32,7 @@ export default function InterpreterDashboard() {
   });
 
   const dateRangeMismatch = useMemo(() => {
-    if (!formData.dateRange) return null;
-    const { days } = parseDateRange(formData.dateRange);
-    if (days <= 0) return null;
-    const detectedType = detectDateRangeType(days);
-    if (!detectedType) return null;
-    if (detectedType === formData.recordType) return null;
-
-    return {
-      days,
-      detectedType,
-      selectedType: formData.recordType,
-      message: `⚠️ The date range spans ${days} day${days !== 1 ? 's' : ''}, which looks like a ${getRecordTypeLabel(detectedType)} record, but you selected "${getRecordTypeLabel(formData.recordType)}". Please verify this is correct.`,
-    };
+    return checkDateRangeMismatch(formData.dateRange, formData.recordType);
   }, [formData.dateRange, formData.recordType]);
 
   useEffect(() => {
@@ -358,16 +315,30 @@ export default function InterpreterDashboard() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {records.map((record) => (
-                      <tr key={record.id} className="hover:bg-gray-50">
+                    {records.map((record) => {
+                      const mismatch = checkDateRangeMismatch(record.dateRange, (record.recordType || 'daily') as 'daily' | 'weekly' | 'monthly');
+                      return (
+                      <tr key={record.id} className={`hover:bg-gray-50 ${mismatch ? 'bg-amber-50' : ''}`}>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {new Date(record.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
-                          {record.recordType || 'daily'}
+                          <div className="flex items-center gap-1">
+                            {record.recordType || 'daily'}
+                            {mismatch && (
+                              <span title={mismatch.message} className="text-amber-500 cursor-help">
+                                <AlertTriangle className="h-4 w-4" />
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {record.dateRange}
+                        <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                          <div>{record.dateRange}</div>
+                          {mismatch && (
+                            <div className="text-xs text-amber-600 mt-1 font-normal">
+                              ⚠️ Looks like {getRecordTypeLabel(mismatch.detectedType)} ({mismatch.days} days)
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {record.totalMinutes}
@@ -375,8 +346,8 @@ export default function InterpreterDashboard() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {record.totalCalls}
                         </td>
-                      </tr>
-                    ))}
+                      </tr>);
+                    })}
                     {records.length === 0 && (
                       <tr>
                         <td colSpan={5} className="px-6 py-10 text-center text-sm text-gray-500">
