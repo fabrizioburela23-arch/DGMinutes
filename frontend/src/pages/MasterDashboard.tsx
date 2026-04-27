@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { LogOut, Users, FileText, BarChart3, AlertTriangle } from 'lucide-react';
 import { checkDateRangeMismatch, getRecordTypeLabel } from '../lib/dateRangeMismatch';
+import { apiFetch } from '../lib/api';
 
 export default function MasterDashboard() {
   const { user, logout, token } = useAuth();
@@ -20,8 +21,8 @@ export default function MasterDashboard() {
   const fetchData = async () => {
     try {
       const [usersRes, recordsRes] = await Promise.all([
-        fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/records', { headers: { Authorization: `Bearer ${token}` } })
+        apiFetch('/api/users', { headers: { Authorization: `Bearer ${token}` } }),
+        apiFetch('/api/records', { headers: { Authorization: `Bearer ${token}` } })
       ]);
       
       if (usersRes.ok) {

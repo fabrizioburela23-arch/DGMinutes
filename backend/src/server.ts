@@ -1,61 +1,21 @@
 import 'dotenv/config';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
-import fs from 'fs';
-import path from 'path';
-import Database from 'better-sqlite3';
+import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
+import { pool, initializeSchema } from './db';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const PORT = Number(process.env.PORT) || 3000;
-const DATABASE_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'app.db');
 const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : 'super-secret-key-for-dev');
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET must be configured in production');
-}
-
-const databaseDirectory = path.dirname(DATABASE_PATH);
-if (databaseDirectory && databaseDirectory !== '.') {
-  fs.mkdirSync(databaseDirectory, { recursive: true });
-}
-
-const db = new Database(DATABASE_PATH);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    fullName TEXT NOT NULL,
-    interpreterId TEXT UNIQUE NOT NULL,
-    platform TEXT NOT NULL,
-    primaryContact TEXT NOT NULL,
-    secondaryContact TEXT,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS daily_records (
-    id TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    interpreterId TEXT NOT NULL,
-    username TEXT NOT NULL,
-    dateRange TEXT NOT NULL,
-    totalMinutes INTEGER NOT NULL,
-    totalCalls INTEGER NOT NULL,
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (userId) REFERENCES users(id)
-  );
-`);
-
-try {
-  db.exec(`ALTER TABLE daily_records ADD COLUMN recordType TEXT DEFAULT 'daily'`);
-} catch {
-  // Column already exists.
 }
 
 const upload = multer({
@@ -67,7 +27,6 @@ function createAiClient() {
   if (!GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not configured on the server');
   }
-
   return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 }
 
@@ -78,7 +37,6 @@ function parseGeneratedJson(text: string) {
     .replace(/^```\s*/i, '')
     .replace(/```$/i, '')
     .trim();
-
   return JSON.parse(cleaned || '{}');
 }
 
@@ -92,8 +50,15 @@ function toSafeNumber(value: unknown) {
 }
 
 async function startServer() {
+  await initializeSchema();
+
   const app = express();
 
+  const allowedOrigins = CORS_ORIGIN === '*'
+    ? true
+    : CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+
+  app.use(cors({ origin: allowedOrigins, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
 
   const authenticate = (req: any, res: any, next: any) => {
@@ -127,15 +92,15 @@ async function startServer() {
     res.json({
       ok: true,
       environment: isProduction ? 'production' : 'development',
-      databasePath: DATABASE_PATH,
+      databaseConfigured: Boolean(process.env.DATABASE_URL),
       geminiConfigured: Boolean(GEMINI_API_KEY),
     });
   });
 
-  app.get('/api/auth/master-count', (_req, res) => {
+  app.get('/api/auth/master-count', async (_req, res) => {
     try {
-      const countResult: any = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'master'").get();
-      res.json({ count: countResult.count });
+      const result = await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'master'");
+      res.json({ count: result.rows[0].count });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -161,33 +126,37 @@ async function startServer() {
       }
 
       if (normalizedRole === 'master') {
-        const countResult: any = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'master'").get();
-        if (countResult.count >= 3) {
+        const countResult = await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'master'");
+        if (countResult.rows[0].count >= 3) {
           return res.status(400).json({ error: 'Maximum number of master accounts reached' });
         }
       }
 
-      const existingUser = db.prepare('SELECT * FROM users WHERE email = ? OR interpreterId = ?').get(email, interpreterId);
-      if (existingUser) {
+      const existing = await pool.query(
+        'SELECT id FROM users WHERE email = $1 OR "interpreterId" = $2 LIMIT 1',
+        [email, interpreterId],
+      );
+      if (existing.rowCount && existing.rowCount > 0) {
         return res.status(400).json({ error: 'Email or Interpreter ID already exists' });
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
       const id = crypto.randomUUID();
 
-      db.prepare(`
-        INSERT INTO users (id, fullName, interpreterId, platform, primaryContact, secondaryContact, email, password, role)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        fullName,
-        interpreterId,
-        platform,
-        primaryContact,
-        secondaryContact || '',
-        email,
-        hashedPassword,
-        normalizedRole,
+      await pool.query(
+        `INSERT INTO users (id, "fullName", "interpreterId", platform, "primaryContact", "secondaryContact", email, password, role)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          id,
+          fullName,
+          interpreterId,
+          platform,
+          primaryContact,
+          secondaryContact || '',
+          email,
+          hashedPassword,
+          normalizedRole,
+        ],
       );
 
       const token = jwt.sign(
@@ -210,7 +179,8 @@ async function startServer() {
         return res.status(400).json({ error: 'Email and password are required' });
       }
 
-      const user: any = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+      const result = await pool.query('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+      const user = result.rows[0];
       if (!user) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -247,16 +217,23 @@ async function startServer() {
     }
   });
 
-  app.get('/api/auth/me', authenticate, (req: any, res) => {
-    const user: any = db
-      .prepare('SELECT id, fullName, interpreterId, platform, primaryContact, secondaryContact, email, role FROM users WHERE id = ?')
-      .get(req.user.id);
+  app.get('/api/auth/me', authenticate, async (req: any, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, "fullName", "interpreterId", platform, "primaryContact", "secondaryContact", email, role
+         FROM users WHERE id = $1 LIMIT 1`,
+        [req.user.id],
+      );
+      const user = result.rows[0];
 
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({ user });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
-
-    res.json({ user });
   });
 
   app.post('/api/analyze-image', authenticate, upload.single('image'), async (req: any, res) => {
@@ -322,7 +299,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/records', authenticate, (req: any, res) => {
+  app.post('/api/records', authenticate, async (req: any, res) => {
     try {
       const { interpreterId, dateRange, totalMinutes, totalCalls, recordType } = req.body;
 
@@ -331,18 +308,19 @@ async function startServer() {
       }
 
       const id = crypto.randomUUID();
-      db.prepare(`
-        INSERT INTO daily_records (id, userId, interpreterId, username, dateRange, totalMinutes, totalCalls, recordType)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        req.user.id,
-        interpreterId,
-        req.user.fullName,
-        dateRange,
-        Number(totalMinutes),
-        Number(totalCalls),
-        recordType || 'daily',
+      await pool.query(
+        `INSERT INTO daily_records (id, "userId", "interpreterId", username, "dateRange", "totalMinutes", "totalCalls", "recordType")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          id,
+          req.user.id,
+          interpreterId,
+          req.user.fullName,
+          dateRange,
+          Number(totalMinutes),
+          Number(totalCalls),
+          recordType || 'daily',
+        ],
       );
 
       res.json({ success: true, id });
@@ -351,46 +329,36 @@ async function startServer() {
     }
   });
 
-  app.get('/api/records', authenticate, (req: any, res) => {
+  app.get('/api/records', authenticate, async (req: any, res) => {
     try {
-      const records = req.user.role === 'master'
-        ? db.prepare('SELECT * FROM daily_records ORDER BY createdAt DESC').all()
-        : db.prepare('SELECT * FROM daily_records WHERE userId = ? ORDER BY createdAt DESC').all(req.user.id);
+      const result = req.user.role === 'master'
+        ? await pool.query('SELECT * FROM daily_records ORDER BY "createdAt" DESC')
+        : await pool.query('SELECT * FROM daily_records WHERE "userId" = $1 ORDER BY "createdAt" DESC', [req.user.id]);
 
-      res.json({ records });
+      res.json({ records: result.rows });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get('/api/users', authenticate, requireMaster, (_req: any, res) => {
+  app.get('/api/users', authenticate, requireMaster, async (_req: any, res) => {
     try {
-      const users = db
-        .prepare('SELECT id, fullName, interpreterId, platform, primaryContact, secondaryContact, email, role FROM users ORDER BY fullName ASC')
-        .all();
-      res.json({ users });
+      const result = await pool.query(
+        `SELECT id, "fullName", "interpreterId", platform, "primaryContact", "secondaryContact", email, role
+         FROM users ORDER BY "fullName" ASC`,
+      );
+      res.json({ users: result.rows });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
-
-  if (!isProduction) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`API server listening on port ${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});
