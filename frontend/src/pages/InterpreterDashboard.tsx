@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Upload, LogOut, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react';
 import { checkDateRangeMismatch, getRecordTypeLabel } from '../lib/dateRangeMismatch';
+import { apiFetch } from '../lib/api';
 
 type RecordItem = {
   id: string;
@@ -49,7 +50,7 @@ export default function InterpreterDashboard() {
     if (!token) return;
 
     try {
-      const res = await fetch('/api/records', {
+      const res = await apiFetch('/api/records', {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -79,7 +80,7 @@ export default function InterpreterDashboard() {
       const form = new FormData();
       form.append('image', file);
 
-      const res = await fetch('/api/analyze-image', {
+      const res = await apiFetch('/api/analyze-image', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -127,7 +128,7 @@ export default function InterpreterDashboard() {
     setMessage({ type: '', text: '' });
 
     try {
-      const res = await fetch('/api/records', {
+      const res = await apiFetch('/api/records', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

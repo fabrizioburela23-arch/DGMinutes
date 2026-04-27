@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Globe, Eye, EyeOff } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -21,7 +22,7 @@ export default function Register() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch('/api/auth/master-count')
+    apiFetch('/api/auth/master-count')
       .then(res => res.json())
       .then(data => {
         setMasterCount(data.count || 0);
@@ -40,7 +41,7 @@ export default function Register() {
     e.preventDefault();
     setError('');
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
